@@ -5,38 +5,42 @@ const mongoose = require('mongoose');
 const app = express();
 app.use(express.json());
 
-// Lấy Chuỗi kết nối an toàn từ Biến môi trường (Environment Variable)
+// 1. LẤY TẤT CẢ LINK & BẢO MẬT TỪ BIẾN MÔI TRƯỜNG RENDER
 const MONGO_URI = process.env.MONGO_URI;
+const SCRIPT_URL = process.env.SCRIPT_URL;
 
+// Kiểm tra kết nối MongoDB
 if (!MONGO_URI) {
-    console.error("❌ LỖI: Chưa cấu hình MONGO_URI trên Render!");
+    console.error("❌ LỖI: Chưa cài đặt MONGO_URI trên Render!");
 } else {
     mongoose.connect(MONGO_URI)
-        .then(() => console.log("✅ Đã kết nối thành công đến MongoDB Atlas!"))
-        .catch(err => console.error("❌ Lỗi kết nối MongoDB:", err));
+        .then(() => console.log("✅ Kết nối MongoDB thành công!"))
+        .catch(err => console.error("❌ Lỗi MongoDB:", err));
 }
 
-// Định nghĩa Cấu trúc lưu Key trong Database
+// 2. TẠO SCHEMA VÀ MODEL LƯU KEY
 const keySchema = new mongoose.Schema({
     key: { type: String, required: true, unique: true },
     hwid: { type: String, required: true },
     expiresAt: { type: Date, required: true }
 });
 
-// Tự động xóa Key khỏi MongoDB sau khi hết hạn 24h
+// Tự động xóa Key khỏi Database sau 24h
 keySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const KeyModel = mongoose.model('Key', keySchema);
 
-// 1. TRANG TẠO KEY
+// ==========================================================
+// 3. ROUTE TẠO KEY (Vượt link QC chuyển về đây)
+// ==========================================================
 app.get('/getkey', async (req, res) => {
     const hwid = req.query.hwid;
     if (!hwid) {
         return res.status(400).send(`<h2 style="color: red; text-align: center;">❌ Thiếu mã HWID!</h2>`);
     }
 
-    const newKey = "PITAYA_" + crypto.randomBytes(4).toString('hex').toUpperCase();
-    const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000)); // Hạn 24h
+    const newKey = "KEY_" + crypto.randomBytes(4).toString('hex').toUpperCase();
+    const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000)); // Hạn 24 giờ
 
     try {
         await KeyModel.create({ key: newKey, hwid: hwid, expiresAt: expiresAt });
@@ -69,7 +73,9 @@ app.get('/getkey', async (req, res) => {
     }
 });
 
-// 2. API XÁC THỰC KEY
+// ==========================================================
+// 4. API XÁC THỰC KEY (Roblox Client gọi đến)
+// ==========================================================
 app.post('/api/verify', async (req, res) => {
     const { key, hwid } = req.body;
 
@@ -85,13 +91,14 @@ app.post('/api/verify', async (req, res) => {
         }
 
         if (keyData.hwid !== hwid) {
-            return res.json({ valid: false, message: "Key này tạo cho máy khác, không thể dùng!" });
+            return res.json({ valid: false, message: "Key này được tạo cho máy khác!" });
         }
 
+        // Trả về kết quả hợp lệ và Link Raw Main Script từ Biến môi trường Render
         return res.json({ 
             valid: true, 
             message: "Xác thực thành công!",
-            scriptUrl: process.env.SCRIPT_URL || "https://raw.githubusercontent.com/Pitaya-real/Illegal-Soccer/refs/heads/main/main.lua" 
+            scriptUrl: SCRIPT_URL 
         });
 
     } catch (error) {
@@ -100,7 +107,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send("Server Key System MongoDB đang hoạt động bảo mật!");
+    res.send("Server Key System bảo mật đang hoạt động!");
 });
 
 const PORT = process.env.PORT || 3000;
