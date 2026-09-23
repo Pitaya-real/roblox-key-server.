@@ -5,13 +5,16 @@ const mongoose = require('mongoose');
 const app = express();
 app.use(express.json());
 
-// 🚨 THAY LINK MONGODB CỦA BẠN ĐÃ LẤY Ở BƯỚC 1 VÀO ĐÂY:
-const MONGO_URI = "mongodb+srv://<db_username>:gRYNAfAEBYe9Aewh@cluster0.ntu3ssl.mongodb.net/?appName=Cluster0";
+// Lấy Chuỗi kết nối an toàn từ Biến môi trường (Environment Variable)
+const MONGO_URI = process.env.MONGO_URI;
 
-// Kết nối đến MongoDB Database
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ Đã kết nối thành công đến MongoDB Atlas!"))
-    .catch(err => console.error("❌ Lỗi kết nối MongoDB:", err));
+if (!MONGO_URI) {
+    console.error("❌ LỖI: Chưa cấu hình MONGO_URI trên Render!");
+} else {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("✅ Đã kết nối thành công đến MongoDB Atlas!"))
+        .catch(err => console.error("❌ Lỗi kết nối MongoDB:", err));
+}
 
 // Định nghĩa Cấu trúc lưu Key trong Database
 const keySchema = new mongoose.Schema({
@@ -25,26 +28,18 @@ keySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const KeyModel = mongoose.model('Key', keySchema);
 
-// ==========================================================
-// 1. TRANG TẠO KEY (Lưu trực tiếp vào MongoDB)
-// ==========================================================
+// 1. TRANG TẠO KEY
 app.get('/getkey', async (req, res) => {
     const hwid = req.query.hwid;
-    
     if (!hwid) {
         return res.status(400).send(`<h2 style="color: red; text-align: center;">❌ Thiếu mã HWID!</h2>`);
     }
 
     const newKey = "PITAYA_" + crypto.randomBytes(4).toString('hex').toUpperCase();
-    const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000)); // Hạn 24 giờ
+    const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000)); // Hạn 24h
 
     try {
-        // Lưu Key vào Database MongoDB
-        await KeyModel.create({
-            key: newKey,
-            hwid: hwid,
-            expiresAt: expiresAt
-        });
+        await KeyModel.create({ key: newKey, hwid: hwid, expiresAt: expiresAt });
 
         res.send(`
             <!DOCTYPE html>
@@ -62,7 +57,7 @@ app.get('/getkey', async (req, res) => {
             <body>
                 <div class="container">
                     <h2 style="color: #007bff;">🎉 VƯỢT LINK THÀNH CÔNG!</h2>
-                    <p>Key này có thời hạn <b>24 Giờ</b> (An toàn không lo mất khi Server reset):</p>
+                    <p>Key này có thời hạn <b>24 Giờ</b>:</p>
                     <div class="key-box">${newKey}</div>
                     <p style="color: #aaa;">Copy Key và dán vào Roblox UI để sử dụng.</p>
                 </div>
@@ -74,9 +69,7 @@ app.get('/getkey', async (req, res) => {
     }
 });
 
-// ==========================================================
-// 2. API XÁC THỰC KEY (Tìm kiếm Key trong MongoDB)
-// ==========================================================
+// 2. API XÁC THỰC KEY
 app.post('/api/verify', async (req, res) => {
     const { key, hwid } = req.body;
 
@@ -85,7 +78,6 @@ app.post('/api/verify', async (req, res) => {
     }
 
     try {
-        // Tìm Key trong Database
         const keyData = await KeyModel.findOne({ key: key });
 
         if (!keyData) {
@@ -96,11 +88,10 @@ app.post('/api/verify', async (req, res) => {
             return res.json({ valid: false, message: "Key này tạo cho máy khác, không thể dùng!" });
         }
 
-        // 🚨 THAY LINK RAW MAIN SCRIPT GITHUB CỦA BẠN VÀO ĐÂY:
         return res.json({ 
             valid: true, 
             message: "Xác thực thành công!",
-            scriptUrl: "https://raw.githubusercontent.com/Pitaya-real/Illegal-Soccer/refs/heads/main/main.lua" 
+            scriptUrl: process.env.SCRIPT_URL || "https://raw.githubusercontent.com/Pitaya-real/Illegal-Soccer/refs/heads/main/main.lua" 
         });
 
     } catch (error) {
@@ -109,7 +100,7 @@ app.post('/api/verify', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send("Server Key System MongoDB đang hoạt động!");
+    res.send("Server Key System MongoDB đang hoạt động bảo mật!");
 });
 
 const PORT = process.env.PORT || 3000;
