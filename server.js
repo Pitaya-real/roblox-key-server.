@@ -141,7 +141,7 @@ app.post('/api/verify', (req, res) => {
         valid: true, 
         message: "Xác thực thành công!",
         // Thay link dưới bằng Link Raw Main Script tính năng game của bạn trên GitHub
-        scriptUrl: "https://raw.githubusercontent.com/username/repo/main/main_script.lua" 
+        scriptUrl: "https://raw.githubusercontent.com/Pitaya-real/Illegal-Soccer/refs/heads/main/main.lua" 
     });
 });
 
