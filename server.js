@@ -35,7 +35,7 @@ app.get('/getkey', async (req, res) => {
         return res.status(400).send(`<h2 style="color: red; text-align: center;">❌ Thiếu mã HWID!</h2>`);
     }
 
-    const newKey = "KEY_" + crypto.randomBytes(4).toString('hex').toUpperCase();
+    const newKey = "PITAYA_" + crypto.randomBytes(4).toString('hex').toUpperCase();
     const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000)); // Hạn 24 giờ
 
     try {
