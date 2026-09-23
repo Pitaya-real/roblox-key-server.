@@ -1,61 +1,58 @@
 const express = require('express');
-const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 const app = express();
 app.use(express.json());
 
-// 1. LẤY TẤT CẢ LINK & BẢO MẬT TỪ BIẾN MÔI TRƯỜNG RENDER
+// 1. LẤY BIẾN MÔI TRƯỜNG TỪ RENDER
 const MONGO_URI = process.env.MONGO_URI;
-const SCRIPT_URL = process.env.SCRIPT_URL;
+const SCRIPT_URL = process.env.SCRIPT_URL; // Link script gốc cài trên Render
 
-// Kiểm tra kết nối MongoDB
-if (!MONGO_URI) {
-    console.error("❌ LỖI: Chưa cài đặt MONGO_URI trên Render!");
-} else {
-    mongoose.connect(MONGO_URI)
-        .then(() => console.log("✅ Kết nối MongoDB thành công!"))
-        .catch(err => console.error("❌ Lỗi MongoDB:", err));
-}
+if (!MONGO_URI) console.error("❌ LỖI: Chưa cài MONGO_URI!");
+if (!SCRIPT_URL) console.error("❌ LỖI: Chưa cài SCRIPT_URL!");
 
-// 2. TẠO SCHEMA VÀ MODEL LƯU KEY
+mongoose.connect(MONGO_URI)
+    .then(() => console.log("✅ Đã kết nối MongoDB!"))
+    .catch(err => console.error("❌ Lỗi MongoDB:", err));
+
+// 2. SCHEMA LƯU KEY VÀ TOKEN 24H
 const keySchema = new mongoose.Schema({
     key: { type: String, required: true, unique: true },
     hwid: { type: String, required: true },
+    token: { type: String, required: true }, // Lưu token phát sinh từ game
     expiresAt: { type: Date, required: true }
 });
 
-// Tự động xóa Key khỏi Database sau 24h
+// Tự động xóa khỏi Database khi hết hạn 24h
 keySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
 const KeyModel = mongoose.model('Key', keySchema);
 
 // ==========================================================
-// 3. ROUTE TẠO KEY (Vượt link QC chuyển về đây)
+// 3. ROUTE TẠO / XEM KEY (Dành cho Web)
+// URL: /getkey?hwid=...&token=...
 // ==========================================================
 app.get('/getkey', async (req, res) => {
-    const hwid = req.query.hwid;
-    
-    // 1. CHẶN TRUY CẬP TRỰC TIẾP: Nếu không có HWID thì từ chối, bắt buộc phải vào từ game qua Link4M
-    if (!hwid || hwid.trim() === "") {
+    const hwid = req.query.hwid ? req.query.hwid.trim() : "";
+    const token = req.query.token ? req.query.token.trim() : "";
+
+    // Chặn truy cập trực tiếp không có HWID hoặc Token
+    if (!hwid || !token) {
         return res.send(`
             <!DOCTYPE html>
             <html lang="vi">
             <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Truy Cập Không Hợp Lệ</title>
+                <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Lỗi Truy Cập</title>
                 <style>
                     body { background: #0f0f13; color: #fff; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; }
-                    .card { background: #1a1a24; padding: 30px; border-radius: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.7); max-width: 400px; border: 1px solid #2a2a3c; }
-                    h2 { color: #e74c3c; margin-bottom: 10px; }
-                    p { color: #a0a0ab; font-size: 14px; line-height: 1.5; }
+                    .card { background: #1a1a24; padding: 30px; border-radius: 16px; border: 1px solid #2a2a3c; max-width: 400px; }
+                    h2 { color: #e74c3c; } p { color: #a0a0ab; font-size: 14px; }
                 </style>
             </head>
             <body>
                 <div class="card">
-                    <h2>❌ Lỗi Truy Cập</h2>
-                    <p>Bạn không thể truy cập trực tiếp trang này!<br>Vui lòng vào game, bấm nút <b>Lấy Key</b> và hoàn thành vượt link để nhận mã chính thức.</p>
+                    <h2>❌ Truy Cập Không Hợp Lệ</h2>
+                    <p>Thiếu thông tin xác thực!<br>Vui lòng vào lại game và bấm nút <b>LẤY KEY</b>.</p>
                 </div>
             </body>
             </html>
@@ -64,34 +61,59 @@ app.get('/getkey', async (req, res) => {
 
     try {
         const now = new Date();
-        let keyData = await KeyModel.findOne({ hwid: hwid });
+        
+        // Tìm xem HWID này đã có Key/Token nào còn hạn hay chưa
+        let keyData = await KeyModel.findOne({ hwid: hwid, expiresAt: { $gt: now } });
+
         let currentKey = "";
         let expiresAtTime = "";
 
-        // 2. KIỂM TRA KEY CŨ CÒN HẠN HAY KHÔNG
-        if (keyData && new Date(keyData.expiresAt) > now) {
-            currentKey = keyData.key;
-            expiresAtTime = new Date(keyData.expiresAt).getTime(); // Lấy mốc thời gian hết hạn dạng miligiây
+        if (keyData) {
+            // TRƯỜNG HỢP 1: Key cũ CÒN HẠN (Trong vòng 24h)
+            // Kiểm tra Token trên URL có khớp với Token đã lưu không
+            if (keyData.token === token) {
+                // Khớp Token -> Cho phép vào lại trang web xem lại Key cũ thoải mái
+                currentKey = keyData.key;
+                expiresAtTime = new Date(keyData.expiresAt).getTime();
+            } else {
+                // Token không khớp (dùng token cũ hoặc linh tinh)
+                return res.send(`
+                    <!DOCTYPE html>
+                    <html lang="vi">
+                    <head>
+                        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>Token Không Hợp Lệ</title>
+                        <style>
+                            body { background: #0f0f13; color: #fff; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; }
+                            .card { background: #1a1a24; padding: 30px; border-radius: 16px; border: 1px solid #2a2a3c; max-width: 400px; }
+                            h2 { color: #e74c3c; } p { color: #a0a0ab; font-size: 14px; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="card">
+                            <h2>⚠️ Mã Xác Thực Không Đúng</h2>
+                            <p>Link này không khớp với phiên làm việc hiện tại.<br>Vui lòng mở game và bấm <b>LẤY KEY</b> để lấy đúng link!</p>
+                        </div>
+                    </body>
+                    </html>
+                `);
+            }
         } else {
-            // Nếu chưa có hoặc đã hết hạn -> Tạo mới hoàn toàn một key 24h
+            // TRƯỜNG HỢP 2: Key ĐÃ HẾT HẠN hoặc CHƯA TẠO
+            // Tạo mã Key mới + Gắn Token mới từ game gửi sang + Đặt hạn 24h
             currentKey = "PITAYA_" + Math.random().toString(36).substring(2, 10).toUpperCase();
-            const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 giờ tới
+            const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Hạn 24 tiếng
             expiresAtTime = expiresAt.getTime();
 
-            if (keyData) {
-                keyData.key = currentKey;
-                keyData.expiresAt = expiresAt;
-                await keyData.save();
-            } else {
-                await KeyModel.create({
-                    hwid: hwid,
-                    key: currentKey,
-                    expiresAt: expiresAt
-                });
-            }
+            // Lưu thông tin vào Database (hoặc cập nhật nếu đã từng có record cũ hết hạn)
+            await KeyModel.findOneAndUpdate(
+                { hwid: hwid },
+                { key: currentKey, hwid: hwid, token: token, expiresAt: expiresAt },
+                { upsert: true, new: true }
+            );
         }
 
-        // 3. TRẢ VỀ GIAO DIỆN CÓ ĐỒNG HỒ ĐẾM NGƯỢC THỜI GIAN THỰC
+        // Trả về giao diện hiển thị Key + Đồng hồ đếm ngược 24h
         res.send(`
             <!DOCTYPE html>
             <html lang="vi">
@@ -101,51 +123,40 @@ app.get('/getkey', async (req, res) => {
                 <title>Lấy Key Thành Công</title>
                 <style>
                     body { background: #0f0f13; color: #fff; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                    .card { background: #1a1a24; padding: 30px; border-radius: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.7); text-align: center; width: 90%; max-width: 400px; border: 1px solid #2a2a3c; }
+                    .card { background: #1a1a24; padding: 30px; border-radius: 16px; text-align: center; width: 90%; max-width: 400px; border: 1px solid #2a2a3c; box-shadow: 0 8px 25px rgba(0,0,0,0.7); }
                     h2 { color: #2ecc71; margin-bottom: 10px; }
                     p { color: #a0a0ab; font-size: 14px; margin-bottom: 15px; }
-                    .input-container { display: flex; gap: 10px; margin-bottom: 15px; }
-                    input { flex: 1; padding: 12px; font-size: 16px; text-align: center; background: #121217; color: #2ecc71; border: 1px solid #33334d; border-radius: 8px; font-weight: bold; outline: none; }
-                    button { width: 100%; padding: 12px; background: #2ecc71; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; transition: 0.2s; }
-                    button:active { background: #27ae60; }
+                    input { width: 100%; padding: 12px; font-size: 16px; text-align: center; background: #121217; color: #2ecc71; border: 1px solid #33334d; border-radius: 8px; font-weight: bold; margin-bottom: 15px; box-sizing: border-box; outline: none; }
+                    button { width: 100%; padding: 12px; background: #2ecc71; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; }
                     .timer { margin-top: 15px; font-size: 13px; color: #f39c12; font-weight: bold; }
                 </style>
             </head>
             <body>
                 <div class="card">
-                    <h2>🎉 Vượt Link Thành Công</h2>
+                    <h2>🎉 Lấy Key Thành Công</h2>
                     <p>Mã Key 24h của bạn:</p>
-                    <div class="input-container">
-                        <input type="text" id="keyInput" value="${currentKey}" readonly>
-                    </div>
+                    <input type="text" id="keyInput" value="${currentKey}" readonly>
                     <button onclick="copyKey()">📋 SAO CHÉP KEY</button>
-                    <div class="timer" id="countdown">Đang tải thời gian hết hạn...</div>
+                    <div class="timer" id="countdown">Đang tính thời gian...</div>
                 </div>
                 <script>
                     function copyKey() {
                         var copyText = document.getElementById("keyInput");
                         copyText.select();
-                        copyText.setSelectionRange(0, 99999);
                         navigator.clipboard.writeText(copyText.value);
-                        alert("Đã sao chép Key thành công!");
+                        alert("Đã sao chép Key!");
                     }
-
-                    // Đồng hồ đếm ngược thời gian thực theo mốc expiresAt từ Database
                     const expiresAt = ${expiresAtTime};
                     function updateTimer() {
-                        const now = new Date().getTime();
-                        const distance = expiresAt - now;
-
-                        if (distance < 0) {
-                            document.getElementById("countdown").innerHTML = "⚠️ Key đã hết hạn! Vui lòng lấy link mới trong game.";
+                        const distance = expiresAt - new Date().getTime();
+                        if (distance <= 0) {
+                            document.getElementById("countdown").innerHTML = "⚠️ Key đã hết hạn! Vui lòng vào game lấy link mới.";
                             return;
                         }
-
-                        const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                        const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60 * 60 / 60));
-                        const seconds = Math.floor((distance % (1000 * 60)) / 1000);
-
-                        document.getElementById("countdown").innerHTML = "⏳ Thời gian còn lại: " + hours + "h " + minutes + "m " + seconds + "s";
+                        const h = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                        const m = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60 * 60 / 60));
+                        const s = Math.floor((distance % (1000 * 60)) / 1000);
+                        document.getElementById("countdown").innerHTML = "⏳ Thời gian còn lại: " + h + "h " + m + "m " + s + "s";
                     }
                     setInterval(updateTimer, 1000);
                     updateTimer();
@@ -154,47 +165,44 @@ app.get('/getkey', async (req, res) => {
             </html>
         `);
     } catch (err) {
-        console.error("Database Error:", err);
-        res.send(`<h3 style='color:red; text-align:center; margin-top:50px;'>Lỗi tạo Key trên Database! Chi tiết: ${err.message}</h3>`);
+        res.send(`<h3>Lỗi Server: ${err.message}</h3>`);
     }
 });
 
 // ==========================================================
-// 4. API XÁC THỰC KEY (Roblox Client gọi đến)
+// 4. ROUTE VERIFY TỪ GAME ROBLOX
+// URL: /verify?hwid=...&key=...
 // ==========================================================
-app.post('/api/verify', async (req, res) => {
-    const { key, hwid } = req.body;
+app.get('/verify', async (req, res) => {
+    const hwid = req.query.hwid ? req.query.hwid.trim() : "";
+    const key = req.query.key ? req.query.key.trim() : "";
 
-    if (!key || !hwid) {
-        return res.json({ valid: false, message: "Thiếu thông tin Key hoặc HWID!" });
-    }
+    if (!hwid || !key) return res.json({ status: "error", message: "Thiếu dữ liệu" });
 
     try {
-        const keyData = await KeyModel.findOne({ key: key });
-
-        if (!keyData) {
-            return res.json({ valid: false, message: "Key không tồn tại hoặc đã hết hạn!" });
-        }
-
-        if (keyData.hwid !== hwid) {
-            return res.json({ valid: false, message: "Key này được tạo cho máy khác!" });
-        }
-
-        // Trả về kết quả hợp lệ và Link Raw Main Script từ Biến môi trường Render
-        return res.json({ 
-            valid: true, 
-            message: "Xác thực thành công!",
-            scriptUrl: SCRIPT_URL 
+        const now = new Date();
+        // Kiểm tra khớp CẢ Key, HWID và thời hạn còn hiệu lực
+        const keyData = await KeyModel.findOne({ 
+            key: key, 
+            hwid: hwid, 
+            expiresAt: { $gt: now } 
         });
 
-    } catch (error) {
-        return res.json({ valid: false, message: "Lỗi kết nối Server!" });
+        if (keyData) {
+            // Trả về đúng link script lấy từ biến môi trường Render (Bảo mật 100%)
+            return res.json({ 
+                status: "success", 
+                scriptUrl: process.env.SCRIPT_URL 
+            });
+        } else {
+            return res.json({ status: "invalid" });
+        }
+    } catch (err) {
+        return res.json({ status: "error", message: err.message });
     }
 });
 
-app.get('/', (req, res) => {
-    res.send("Server Key System bảo mật đang hoạt động!");
-});
+app.get('/', (req, res) => res.send("Server Key System đang hoạt động!"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server chạy tại port ${PORT}`));
