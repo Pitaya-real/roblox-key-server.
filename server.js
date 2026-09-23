@@ -100,7 +100,7 @@ app.post('/api/verify', async (req, res) => {
         return res.json({ 
             valid: true, 
             message: "Xác thực thành công!",
-            scriptUrl: "https://raw.githubusercontent.com/username/repo/main/main_script.lua" 
+            scriptUrl: "https://raw.githubusercontent.com/Pitaya-real/Illegal-Soccer/refs/heads/main/main.lua" 
         });
 
     } catch (error) {
