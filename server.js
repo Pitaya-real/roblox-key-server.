@@ -146,34 +146,14 @@ app.get('/getkey', async (req, res) => {
         let expiresAtTime = "";
 
         if (keyData) {
-            if (keyData.token === token) {
-                currentKey = keyData.key;
-                expiresAtTime = new Date(keyData.expiresAt).getTime();
-            } else {
-                // LỖI: Token không khớp
-                return res.send(`
-                    <!DOCTYPE html>
-                    <html lang="vi">
-                    <head>
-                        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>Link Hết Hạn</title>
-                        <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-                        <style>${COMMON_STYLE}</style>
-                    </head>
-                    <body>
-                        <div class="card">
-                            <div class="icon-wrapper warning">
-                                <svg viewBox="0 0 24 24" fill="#f39c12"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-                            </div>
-                            <h2>LINK ĐÃ HẾT HẠN</h2>
-                            <p class="sub">Link này không thuộc phiên làm việc hiện tại.<br>Vui lòng vào lại game bấm <b>LẤY KEY</b> để nhận link mới nhất!</p>
-                        </div>
-                    </body>
-                    </html>
-                `);
-            }
+            // NẾU HWID ĐÃ CÓ KEY CÒN HẠN: Cập nhật token mới và trả về Key cũ đó
+            keyData.token = token;
+            await keyData.save();
+
+            currentKey = keyData.key;
+            expiresAtTime = new Date(keyData.expiresAt).getTime();
         } else {
-            // TẠO KEY MỚI 24H
+            // TẠO KEY MỚI 24H (Nếu chưa có Key hoặc Key cũ đã hết hạn)
             currentKey = "PITAYA_" + Math.random().toString(36).substring(2, 10).toUpperCase();
             const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
             expiresAtTime = expiresAt.getTime();
