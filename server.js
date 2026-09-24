@@ -12,20 +12,42 @@ if (!MONGO_URI) console.error("❌ LỖI: Chưa cài MONGO_URI!");
 if (!SCRIPT_URL) console.error("❌ LỖI: Chưa cài SCRIPT_URL!");
 
 mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ Đã kết nối MongoDB!"))
+    .then(async () => {
+        console.log("✅ Đã kết nối MongoDB!");
+        // Tự động rebuild Index để đảm bảo tính năng TTL (xóa tự động) hoạt động 100%
+        try {
+            await KeyModel.syncIndexes();
+            console.log("✅ Đã đồng bộ Index tự động xóa Key hết hạn!");
+        } catch (idxErr) {
+            console.error("⚠️ Lỗi đồng bộ Index:", idxErr.message);
+        }
+    })
     .catch(err => console.error("❌ Lỗi MongoDB:", err));
 
 // 2. SCHEMA LƯU KEY VÀ TOKEN 24H
 const keySchema = new mongoose.Schema({
     key: { type: String, required: true, unique: true },
     hwid: { type: String, required: true },
-    token: { type: String, required: true }, // Lưu token phát sinh từ game
+    token: { type: String, required: true },
     expiresAt: { type: Date, required: true }
 });
 
-// Tự động xóa khỏi Database khi hết hạn 24h
+// LỚP 1: Cấu hình TTL Index của MongoDB (Xóa tự động khi expiresAt <= thời gian hiện tại)
 keySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 const KeyModel = mongoose.model('Key', keySchema);
+
+// LỚP 2: Dọn dẹp chủ động bằng Node.js (Chạy mỗi 1 giờ để giải phóng hoàn toàn dung lượng)
+setInterval(async () => {
+    try {
+        const result = await KeyModel.deleteMany({ expiresAt: { $lte: new Date() } });
+        if (result.deletedCount > 0) {
+            console.log(`🧹 [DỌN CƠ CSDL] Đã xóa ${result.deletedCount} key hết hạn khỏi Database.`);
+        }
+    } catch (cleanErr) {
+        console.error("❌ Lỗi dọn dẹp Database:", cleanErr.message);
+    }
+}, 60 * 60 * 1000); // 1 tiếng quét 1 lần
 
 // ==========================================================
 // 3. ROUTE TẠO / XEM KEY (Dành cho Web)
@@ -35,7 +57,6 @@ app.get('/getkey', async (req, res) => {
     const hwid = req.query.hwid ? req.query.hwid.trim() : "";
     const token = req.query.token ? req.query.token.trim() : "";
 
-    // Chặn truy cập trực tiếp không có HWID hoặc Token
     if (!hwid || !token) {
         return res.send(`
             <!DOCTYPE html>
@@ -62,21 +83,18 @@ app.get('/getkey', async (req, res) => {
     try {
         const now = new Date();
         
-        // Tìm xem HWID này đã có Key/Token nào còn hạn hay chưa
+        // Tìm key còn hạn trong DB
         let keyData = await KeyModel.findOne({ hwid: hwid, expiresAt: { $gt: now } });
 
         let currentKey = "";
         let expiresAtTime = "";
 
         if (keyData) {
-            // TRƯỜNG HỢP 1: Key cũ CÒN HẠN (Trong vòng 24h)
-            // Kiểm tra Token trên URL có khớp với Token đã lưu không
+            // Key CÒN HẠN: So sánh Token
             if (keyData.token === token) {
-                // Khớp Token -> Cho phép vào lại trang web xem lại Key cũ thoải mái
                 currentKey = keyData.key;
                 expiresAtTime = new Date(keyData.expiresAt).getTime();
             } else {
-                // Token không khớp (dùng token cũ hoặc linh tinh)
                 return res.send(`
                     <!DOCTYPE html>
                     <html lang="vi">
@@ -99,13 +117,11 @@ app.get('/getkey', async (req, res) => {
                 `);
             }
         } else {
-            // TRƯỜNG HỢP 2: Key ĐÃ HẾT HẠN hoặc CHƯA TẠO
-            // Tạo mã Key mới + Gắn Token mới từ game gửi sang + Đặt hạn 24h
+            // Key HẾT HẠN hoặc CHƯA TẠO -> Tạo mới Key 24h
             currentKey = "PITAYA_" + Math.random().toString(36).substring(2, 10).toUpperCase();
-            const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Hạn 24 tiếng
+            const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
             expiresAtTime = expiresAt.getTime();
 
-            // Lưu thông tin vào Database (hoặc cập nhật nếu đã từng có record cũ hết hạn)
             await KeyModel.findOneAndUpdate(
                 { hwid: hwid },
                 { key: currentKey, hwid: hwid, token: token, expiresAt: expiresAt },
@@ -113,7 +129,6 @@ app.get('/getkey', async (req, res) => {
             );
         }
 
-        // Trả về giao diện hiển thị Key + Đồng hồ đếm ngược 24h
         res.send(`
             <!DOCTYPE html>
             <html lang="vi">
@@ -181,7 +196,6 @@ app.get('/verify', async (req, res) => {
 
     try {
         const now = new Date();
-        // Kiểm tra khớp CẢ Key, HWID và thời hạn còn hiệu lực
         const keyData = await KeyModel.findOne({ 
             key: key, 
             hwid: hwid, 
@@ -189,7 +203,6 @@ app.get('/verify', async (req, res) => {
         });
 
         if (keyData) {
-            // Trả về đúng link script lấy từ biến môi trường Render (Bảo mật 100%)
             return res.json({ 
                 status: "success", 
                 scriptUrl: process.env.SCRIPT_URL 
