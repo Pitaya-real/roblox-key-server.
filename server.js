@@ -7,9 +7,11 @@ app.use(express.json());
 // 1. LẤY BIẾN MÔI TRƯỜNG TỪ RENDER
 const MONGO_URI = process.env.MONGO_URI;
 const SCRIPT_URL = process.env.SCRIPT_URL;
+const SERVER_URL = process.env.SERVER_URL; // Biến URL tự ping giữ server thức
 
 if (!MONGO_URI) console.error("❌ LỖI: Chưa cài MONGO_URI!");
 if (!SCRIPT_URL) console.error("❌ LỖI: Chưa cài SCRIPT_URL!");
+if (!SERVER_URL) console.error("⚠️ CẢNH BÁO: Chưa cài SERVER_URL (Tính năng tự ping sẽ không chạy)!");
 
 mongoose.connect(MONGO_URI)
     .then(async () => {
@@ -294,15 +296,17 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Tự gọi chính mình giữ Render không ngủ đông[span_0](start_span)[span_0](end_span)
+// Tự gọi chính mình giữ Render không ngủ đông
 const https = require('https');
-setInterval(() => {
-    https.get('https://my-key-system-eyd6.onrender.com', (res) => {
-        console.log('⏰ Ping tự động giữ server hoạt động!');
-    }).on('error', (err) => {
-        console.error('Lỗi Ping:', err.message);
-    });
-}, 14 * 60 * 1000);
+if (SERVER_URL) {
+    setInterval(() => {
+        https.get(SERVER_URL, (res) => {
+            console.log('⏰ Ping tự động giữ server hoạt động!');
+        }).on('error', (err) => {
+            console.error('Lỗi Ping:', err.message);
+        });
+    }, 14 * 60 * 1000);
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server chạy tại port ${PORT}`));
