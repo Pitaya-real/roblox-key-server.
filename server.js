@@ -217,5 +217,15 @@ app.get('/verify', async (req, res) => {
 
 app.get('/', (req, res) => res.send("Server Key System đang hoạt động!"));
 
+// Tự gọi lại chính mình mỗi 14 phút để Render không bị ngủ đông
+const https = require('https');
+setInterval(() => {
+    https.get('https://my-key-system-eyd6.onrender.com', (res) => {
+        console.log('⏰ Ping tự động giữ server hoạt động!');
+    }).on('error', (err) => {
+        console.error('Lỗi Ping:', err.message);
+    });
+}, 14 * 60 * 1000); // 14 phút ping 1 lần (Render ngủ sau 15 phút)
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server chạy tại port ${PORT}`));
